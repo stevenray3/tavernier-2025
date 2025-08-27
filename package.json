@@ -8,8 +8,10 @@
   },
   "author": "Steven Rollet",
   "dependencies": {
-    "discord.js": "^13.8.0",
+    "@discordjs/rest": "^2.6.0",
+    "discord-api-types": "^0.38.21",
+    "discord.js": "^13.17.1",
     "dotenv": "^16.0.1",
-    "node-fetch": "^2.6.7"
+    "node-fetch": "^2.7.0"
   }
 }
