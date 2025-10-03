@@ -3,8 +3,14 @@ const { Client, Intents, Collection, MessageEmbed, MessageActionRow, MessageButt
 const fetch = require('node-fetch');
 const { Routes } = require('discord-api-types/v9');
 const { REST } = require('@discordjs/rest');
+const fs = require('fs');
+const path = require('path');
 
 // --- Configuration ---
+const MINECRAFT_LOG_ROOT = '/opt/minecraft/fabric';
+const MINECRAFT_CHANNEL_NAME = 'minecraft';
+const MINECRAFT_JOIN_REGEX = /\]:\s*(.+?) joined the game/;
+
 const CURRENCY = '🪙';
 const TAX_RATE = 0.10; // 10% de taxe de taverne
 
@@ -839,6 +845,270 @@ function inCooldown(command, userId) {
     return 0;
 }
 
+
+function isLogFile(name) {
+    return name.endsWith('.log') || name === 'latest.log';
+}
+
+async function findLatestMinecraftLog() {
+    try {
+        const candidates = [];
+        const rootEntries = await fs.promises.readdir(MINECRAFT_LOG_ROOT, { withFileTypes: true });
+        for (const entry of rootEntries) {
+            if (entry.isFile() && isLogFile(entry.name)) {
+                candidates.push(path.join(MINECRAFT_LOG_ROOT, entry.name));
+            }
+        }
+
+        const logsDir = path.join(MINECRAFT_LOG_ROOT, 'logs');
+        if (fs.existsSync(logsDir)) {
+            const logEntries = await fs.promises.readdir(logsDir, { withFileTypes: true });
+            for (const entry of logEntries) {
+                if (entry.isFile() && isLogFile(entry.name)) {
+                    candidates.push(path.join(logsDir, entry.name));
+                }
+            }
+        }
+
+        if (!candidates.length) {
+            return null;
+        }
+
+        const stats = await Promise.all(candidates.map(async (file) => {
+            const stat = await fs.promises.stat(file);
+            return { file, mtime: stat.mtimeMs };
+        }));
+        stats.sort((a, b) => b.mtime - a.mtime);
+        return stats[0].file;
+    } catch (err) {
+        console.error('[mc-log] Unable to enumerate Fabric logs:', err);
+        return null;
+    }
+}
+
+async function createTailReader(filePath, onLine, onStale) {
+    let position = 0;
+    let leftover = '';
+
+    try {
+        const stat = await fs.promises.stat(filePath);
+        position = stat.size;
+    } catch (err) {
+        console.warn('[mc-log] Cannot stat ' + filePath + ':', err);
+    }
+
+    const readNewContent = async () => {
+        let handle;
+        try {
+            handle = await fs.promises.open(filePath, 'r');
+            const stat = await handle.stat();
+            if (stat.size < position) {
+                position = 0;
+            }
+            if (stat.size > position) {
+                const length = stat.size - position;
+                const buffer = Buffer.alloc(length);
+                await handle.read(buffer, 0, length, position);
+                position = stat.size;
+                leftover += buffer.toString('utf8');
+                const linesChunk = leftover.split(/\r?\n/);
+                leftover = linesChunk.pop() || '';
+                for (const line of linesChunk) {
+                    try {
+                        const result = onLine(line);
+                        if (result && typeof result.then === 'function') {
+                            result.catch((handlerErr) => console.error('[mc-log] Join handler error:', handlerErr));
+                        }
+                    } catch (handlerErr) {
+                        console.error('[mc-log] Join handler error:', handlerErr);
+                    }
+                }
+            }
+        } catch (err) {
+            if (err && err.code === 'ENOENT' && typeof onStale === 'function') {
+                onStale();
+            } else {
+                console.error('[mc-log] Failed reading ' + filePath + ':', err);
+            }
+        } finally {
+            if (handle) {
+                try {
+                    await handle.close();
+                } catch (closeErr) {
+                    console.error('[mc-log] Failed to close handle:', closeErr);
+                }
+            }
+        }
+    };
+
+    try {
+        const watcher = fs.watch(filePath, (eventType) => {
+            if (eventType === 'rename') {
+                if (typeof onStale === 'function') {
+                    onStale();
+                }
+                return;
+            }
+            if (eventType === 'change') {
+                readNewContent().catch(() => {});
+            }
+        });
+        return () => watcher.close();
+    } catch (err) {
+        console.error('[mc-log] Unable to watch ' + filePath + ':', err);
+        return () => {};
+    }
+}
+
+function resolveMinecraftChannel(client) {
+    return client.channels.cache.find((channel) => channel.type === 'GUILD_TEXT' && channel.name === MINECRAFT_CHANNEL_NAME);
+}
+
+function setupMinecraftLogRelay(client) {
+    if (!fs.existsSync(MINECRAFT_LOG_ROOT)) {
+        console.warn('[mc-log] Directory ' + MINECRAFT_LOG_ROOT + ' not found; skipping Minecraft log watcher.');
+        return;
+    }
+
+    let currentLog = null;
+    let stopTail = null;
+    let attachChain = Promise.resolve();
+    let missingLogWarned = false;
+    let missingChannelWarned = false;
+
+    const sendJoinMessage = (player) => {
+        const channel = resolveMinecraftChannel(client);
+        if (!channel) {
+            if (!missingChannelWarned) {
+                console.warn('[mc-log] Cannot relay Minecraft joins: channel #minecraft not found.');
+                missingChannelWarned = true;
+            }
+            return;
+        }
+        missingChannelWarned = false;
+        channel.send('Minecraft: ' + player + ' vient de rejoindre le serveur !').catch((err) => {
+            console.error('[mc-log] Failed to send Minecraft join message:', err);
+        });
+    };
+
+    const handleLine = (line) => {
+        const match = line.match(MINECRAFT_JOIN_REGEX);
+        if (!match) {
+            return;
+        }
+        const player = (match[1] || '').trim();
+        if (!player) {
+            return;
+        }
+        sendJoinMessage(player);
+    };
+
+    function scheduleAttach() {
+        attachChain = attachChain.then(() => attach()).catch((err) => {
+            console.error('[mc-log] Log attach sequence failed:', err);
+        });
+    }
+
+    async function attach() {
+        try {
+            const latest = await findLatestMinecraftLog();
+            if (!latest) {
+                if (!missingLogWarned) {
+                    console.warn('[mc-log] No Fabric log file found; Minecraft watcher idle.');
+                    missingLogWarned = true;
+                }
+                return;
+            }
+            missingLogWarned = false;
+
+            if (currentLog === latest && stopTail) {
+                return;
+            }
+
+            const previousStop = stopTail;
+            const previousLog = currentLog;
+            stopTail = null;
+
+            try {
+                const tailCloser = await createTailReader(latest, handleLine, scheduleAttach);
+                currentLog = latest;
+                stopTail = tailCloser;
+                if (previousStop) {
+                    previousStop();
+                }
+                console.log('[mc-log] Watching ' + latest + ' for join events.');
+            } catch (err) {
+                console.error('[mc-log] Unable to start log watcher:', err);
+                if (previousStop) {
+                    stopTail = previousStop;
+                    currentLog = previousLog;
+                }
+            }
+        } catch (err) {
+            console.error('[mc-log] Failed to resolve Fabric log:', err);
+        }
+    }
+
+    scheduleAttach();
+
+    const watchers = [];
+
+    const rootWatcher = safeWatch(MINECRAFT_LOG_ROOT, (eventType, filename) => {
+        if (!filename) {
+            scheduleAttach();
+            return;
+        }
+        if (isLogFile(filename) || filename === 'logs') {
+            scheduleAttach();
+        }
+    });
+    if (rootWatcher) {
+        watchers.push(rootWatcher);
+    }
+
+    const logsDir = path.join(MINECRAFT_LOG_ROOT, 'logs');
+    if (fs.existsSync(logsDir)) {
+        const logsWatcher = safeWatch(logsDir, (eventType, filename) => {
+            if (filename && isLogFile(filename)) {
+                scheduleAttach();
+            }
+        });
+        if (logsWatcher) {
+            watchers.push(logsWatcher);
+        }
+    }
+
+    function safeWatch(target, listener) {
+        try {
+            return fs.watch(target, listener);
+        } catch (err) {
+            console.error('[mc-log] Unable to watch ' + target + ':', err);
+            return null;
+        }
+    }
+
+    const shutdown = () => {
+        if (stopTail) {
+            stopTail();
+            stopTail = null;
+        }
+        for (const watcher of watchers) {
+            if (!watcher) {
+                continue;
+            }
+            try {
+                watcher.close();
+            } catch (err) {
+                console.error('[mc-log] Failed to close watcher:', err);
+            }
+        }
+    };
+
+    process.once('exit', shutdown);
+    process.once('SIGINT', shutdown);
+    process.once('SIGTERM', shutdown);
+}
+
 // Client
 const client = new Client({
     intents: [
@@ -873,6 +1143,7 @@ client.once('ready', async () => {
     setInterval(() => {
         applyGlobalDecay(client).catch(err => console.error('Décroissance: erreur', err));
     }, DECAY_INTERVAL_MS);
+    setupMinecraftLogRelay(client);
 });
 
 client.on('guildMemberAdd', (member) => {
