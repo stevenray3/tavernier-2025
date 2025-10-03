@@ -1,23 +1,15 @@
-// discord-tavernier-bot.js
-// Un tavernier convivial pour votre serveur Discord 🍻 + Générateur de mèmes (Imgflip API)
-
 require('dotenv').config();
-
-const { Client, Intents, Collection, MessageEmbed, MessageActionRow, MessageButton } = require('discord.js'); const fetch = require('node-fetch');
-
-// Slash commands (v13)
+const { Client, Intents, Collection, MessageEmbed, MessageActionRow, MessageButton } = require('discord.js');
+const fetch = require('node-fetch');
 const { Routes } = require('discord-api-types/v9');
 const { REST } = require('@discordjs/rest');
 
 // --- Configuration ---
-const PREFIX = '!tavernier';
 const CURRENCY = '🪙';
 const TAX_RATE = 0.10; // 10% de taxe de taverne
 
 // Carte des boissons + métadonnées + effets
-// meta: { type, tastes[], alcoholic }
-// effects: variation d'états utilisateur (ivresse, energie, humeur, concentration, hydratation, charisme)
-const MENU = {
+const DRINKS_MENU = {
     biere_blonde: {
         label: 'Bière blonde', price: 3.5,
         meta: { type: 'bière', tastes: ['amer', 'malté'], alcoholic: true },
@@ -70,13 +62,13 @@ const MENU = {
     },
     jus_orange: {
         label: 'Jus d\'orange', price: 2.5,
-        meta: { type: 'jus', tastes: ['agrumes', 'acidulé'], alcoholic: false },
+        meta: { type: 'agrumes', tastes: ['agrumes', 'acidulé'], alcoholic: false },
         effects: { hydratation: 1, energie: 1 }
     },
     potion_soin: {
         label: 'Potion de soin', price: 7,
         meta: { type: 'potion', tastes: ['mystique'], alcoholic: false },
-        effects: { humeur: 1, concentration: 1, hydratation: 1 }
+        effects: { humeur: 1, concentration: 1, hydratation: 1, blessure: 2 }
     },
     potion_magie: {
         label: 'Potion de magie', price: 7,
@@ -98,7 +90,6 @@ const MENU = {
         meta: { type: 'mystère', tastes: ['surprise'], alcoholic: false },
         effects: { humeur: 1 }
     },
-
     // Nouveaux ajouts
     cafe_latte: {
         label: 'Café latte', price: 3,
@@ -209,10 +200,127 @@ const MENU = {
         label: 'Ice tea pêche', price: 3,
         meta: { type: 'thé glacé', tastes: ['pêche', 'doux'], alcoholic: false },
         effects: { hydratation: 1, energie: 1, humeur: 1 }
+    }
+};
+
+const FOOD_MENU = {
+    cassoulet: {
+        label: 'Cassoulet', price: 12,
+        meta: { type: 'plat chaud', tastes: ['haricots blancs', 'saucisse', 'canard confit', 'ail'], vegetarian: false },
+        effects: { energie: 3, humeur: 2, concentration: -1, faim: 5 }
+    },
+    petit_sale_lentilles: {
+        label: 'Petit salé aux lentilles', price: 10,
+        meta: { type: 'plat chaud', tastes: ['porc fumé', 'lentilles', 'carottes'], vegetarian: false },
+        effects: { energie: 3, humeur: 1, hydratation: 1, faim: 4 }
+    },
+    saucisson_brioche: {
+        label: 'Saucisson brioché', price: 9,
+        meta: { type: 'plat froid/chaud', tastes: ['pâte briochée', 'saucisson', 'beurre'], vegetarian: false },
+        effects: { energie: 2, humeur: 2, concentration: -1, faim: 3 }
+    },
+    pot_au_feu: {
+        label: 'Pot-au-feu', price: 11,
+        meta: { type: 'plat chaud', tastes: ['bœuf', 'légumes', 'bouillon'], vegetarian: false },
+        effects: { energie: 3, humeur: 1, hydratation: 2, faim: 5 }
+    },
+    tartiflette: {
+        label: 'Tartiflette', price: 11,
+        meta: { type: 'plat chaud', tastes: ['pommes de terre', 'reblochon', 'lardons'], vegetarian: false },
+        effects: { energie: 3, humeur: 2, concentration: -1, faim: 4 }
+    },
+    boeuf_bourgignon: {
+        label: 'Bœuf bourguignon', price: 13,
+        meta: { type: 'plat chaud', tastes: ['bœuf', 'vin rouge', 'champignons'], vegetarian: false },
+        effects: { energie: 3, humeur: 2, ivresse: 1, faim: 5 }
+    },
+    confit_de_canard: {
+        label: 'Confit de canard', price: 12,
+        meta: { type: 'plat chaud', tastes: ['canard', 'gras', 'ail'], vegetarian: false },
+        effects: { energie: 3, humeur: 2, concentration: -1, faim: 5 }
+    },
+    blanquette_de_veau: {
+        label: 'Blanquette de veau', price: 12,
+        meta: { type: 'plat chaud', tastes: ['veau', 'crème', 'champignons'], vegetarian: false },
+        effects: { energie: 2, humeur: 2, concentration: 1, faim: 4 }
+    },
+    gratin_dauphinois: {
+        label: 'Gratin dauphinois', price: 8,
+        meta: { type: 'accompagnement/plat', tastes: ['pommes de terre', 'crème', 'ail'], vegetarian: true },
+        effects: { energie: 2, humeur: 2, concentration: -1, faim: 3 }
+    },
+    soupe_a_l_oignon: {
+        label: 'Soupe à l\'oignon', price: 7,
+        meta: { type: 'soupe', tastes: ['oignons caramélisés', 'fromage gratiné', 'bouillon'], vegetarian: true },
+        effects: { energie: 1, humeur: 1, hydratation: 2, faim: 2 }
+    },
+    quiche_lorraine: {
+        label: 'Quiche lorraine', price: 8,
+        meta: { type: 'plat chaud', tastes: ['pâte brisée', 'lardons', 'œufs', 'crème'], vegetarian: false },
+        effects: { energie: 2, humeur: 1, concentration: 1, faim: 3 }
+    },
+    tarte_flambée: {
+        label: 'Tarte flambée', price: 9,
+        meta: { type: 'plat chaud', tastes: ['pâte fine', 'crème', 'oignons', 'lardons'], vegetarian: false },
+        effects: { energie: 2, humeur: 1, concentration: 1, faim: 3 }
+    },
+    choucroute_garnie: {
+        label: 'Choucroute garnie', price: 14,
+        meta: { type: 'plat chaud', tastes: ['chou fermenté', 'saucisses', 'pommes de terre'], vegetarian: false },
+        effects: { energie: 3, humeur: 1, hydratation: 1, faim: 6 }
+    },
+    croque_monsieur: {
+        label: 'Croque-monsieur', price: 6,
+        meta: { type: 'plat chaud', tastes: ['pain de mie', 'jambon', 'fromage', 'béchamel'], vegetarian: false },
+        effects: { energie: 2, humeur: 2, concentration: 1, faim: 2 }
+    },
+    salade_paysanne: {
+        label: 'Salade paysanne', price: 8,
+        meta: { type: 'plat froid', tastes: ['lardons', 'œuf', 'croûtons', 'vinaigrette'], vegetarian: false },
+        effects: { energie: 1, humeur: 1, hydratation: 1, faim: 1 }
+    },
+    tourte_aux_champignons: {
+        label: 'Tourte aux champignons', price: 9,
+        meta: { type: 'plat chaud', tastes: ['pâte feuilletée', 'champignons', 'crème'], vegetarian: true },
+        effects: { energie: 2, humeur: 1, concentration: 1, faim: 3 }
+    },
+    poulet_rotisserie: {
+        label: 'Poulet rôti', price: 10,
+        meta: { type: 'plat chaud', tastes: ['poulet', 'herbes', 'peau croustillante'], vegetarian: false },
+        effects: { energie: 3, humeur: 2, concentration: 1, faim: 4 }
+    },
+    ratatouille: {
+        label: 'Ratatouille', price: 8,
+        meta: { type: 'plat chaud', tastes: ['aubergine', 'courgette', 'poivron', 'tomate'], vegetarian: true },
+        effects: { energie: 1, humeur: 1, hydratation: 2, faim: 2 }
+    },
+    aligot: {
+        label: 'Aligot', price: 7,
+        meta: { type: 'accompagnement/plat', tastes: ['purée', 'tome fraîche', 'ail'], vegetarian: true },
+        effects: { energie: 2, humeur: 2, concentration: -1, faim: 3 }
+    },
+    andouillettes: {
+        label: 'Andouillettes', price: 10,
+        meta: { type: 'plat chaud', tastes: ['boyaux', 'épices', 'moutarde'], vegetarian: false },
+        effects: { energie: 2, humeur: 1, charisme: 1, faim: 2 }
+    },
+    galette_saucisse: {
+        label: 'Galette-saucisse', price: 6,
+        meta: { type: 'plat froid/chaud', tastes: ['galette de blé', 'saucisse'], vegetarian: false },
+        effects: { energie: 2, humeur: 2, concentration: 1, faim: 2 }
+    },
+    hachis_parmentier: {
+        label: 'Hachis Parmentier', price: 9,
+        meta: { type: 'plat chaud', tastes: ['viande hachée', 'purée', 'fromage'], vegetarian: false },
+        effects: { energie: 3, humeur: 2, concentration: -1, faim: 4 }
+    },
+    escargots_beurre_persille: {
+        label: 'Escargots au beurre persillé', price: 10,
+        meta: { type: 'entrée', tastes: ['escargots', 'beurre', 'persil', 'ail'], vegetarian: false },
+        effects: { energie: 1, humeur: 1, charisme: 1, faim: 1 }
     },
 };
 
-// Phrases de tavernier
 const TOASTS = [
     "À la vôtre, compagnons !",
     "Que votre route soit longue et vos pintes jamais vides !",
@@ -224,33 +332,53 @@ const LORE = [
     "On raconte qu'un dragon paya jadis son addition en écailles d'or...",
     "La pierre derrière le comptoir ? Elle provient d'une ruine elfique.",
     "J'ai vu un barde faire lever tout le village avec trois notes seulement.",
-    "Un aventurier a oublié sa cape d'invisibilité ici. Si vous la voyez, dites-le moi."
+    "Un aventurier a oublié sa cape d'invisibilité ici. Si vous la voyez, dites-le moi.",
+    "Le troisième tabouret du comptoir est toujours réservé. On dit que c'est pour le Fantôme de l'Aubergiste, qui revient chaque hiver vérifier ses comptes.",
+    "Un voyageur a un jour commandé une 'Bière du Temps Perdu'. Il est encore assis au fond de la salle, attendant son verre.",
+    "La cave de la taverne est plus grande à l'intérieur qu'à l'extérieur. Personne n'ose y aller après minuit.",
+    "Un jour, une serviette se mit à parler. Elle disait des vérités... mais personne ne voulut l'écouter.",
+    "Le miroir au-dessus de la cheminée reflète parfois des clients qui ne sont pas dans la pièce.",
+    "La soupe du jour change toujours de goût, même si c'est toujours la même recette. Certains y entendent des murmures.",
+    "Un aventurier a tenté de voler notre recette de hydromel. On l'a retrouvé trois jours plus tard, transformé en tonneau.",
+    "La chandelle à votre gauche ? Elle brûle depuis 200 ans. Éteignez-la à vos risques et périls.",
+    "La dernière fois que quelqu'un a commandé un 'Café Noir des Ombres', il a disparu avant la première gorgée.",
+    "On dit que si vous écoutez assez longtemps, les murs chuchotent les noms de ceux qui ne sont jamais repartis.",
+    "Le vin rouge servi ici provient d'une vigne qui pousse... quelque part hors de ce monde.",
+    "Un jour, un magicien a transformé notre chat en table. Depuis, on sert les clients dessus. Elle ronronne encore.",
+    "La porte des toilettes ne mène pas toujours aux toilettes. Mais c'est trop tard quand on s'en aperçoit.",
+    "La 'Potion de Soin' a déjà ressuscité un mort. Il travaille maintenant en cuisine.",
+    "Le dernier client qui a crié 'C'EST QUOI CET ARNAQUE ?!' est devenu une statue de sel. Elle décore l'entrée.",
+    "Si vous entendez une flûte jouer une mélodie inconnue, ne la suivez pas. Le barde qui la joue n'est plus... humain.",
+    "Le fromage sur notre plateau vient d'une ferme où les vaches ont trois yeux. C'est pour ça qu'il est si crémeux.",
+    "Un client a un jour commandé 'la même chose que lui' en pointant le vide. On lui a servi quand même.",
+    "La cave à vin abrite quelque chose qui respire. On lui laisse une bouteille de temps en temps... par politesse.",
+    "Le livre de comptes de la taverne s'écrit tout seul. Personne n'a jamais osé le lire jusqu'à la dernière page.",
+    "Si vous voyez une ombre sans propriétaire, ne la saluez pas. Elle pourrait vous répondre."
 ];
 
-// Happy hour
 const HAPPY_HOUR = { active: false, discount: 0.25 }; // -25%
 
-// Comptes/notes par utilisateur (mémoire en RAM)
 const tabs = new Map();
-
-// --- ÉCONOMIE ---
-// Stockage en RAM : userId -> { balance: number, lastDaily: number (ms), streak: number }
 const economy = new Map();
 const WORK_COOLDOWN_MS = 60 * 60 * 1000; // 1h entre deux "travail"
 const DAILY_MIN = 20, DAILY_MAX = 50;
 const WORK_MIN = 10, WORK_MAX = 25;
+const workCooldowns = new Map();
+const COOLDOWN_MS = 1000;
+const cooldowns = new Collection();
 
-const workCooldowns = new Map(); // userId -> expire timestamp
-
+// --- ÉCONOMIE ---
 function getWallet(userId) {
     if (!economy.has(userId)) economy.set(userId, { balance: 100, lastDaily: 0, streak: 0 }); // 100 🪙 de départ
     return economy.get(userId);
 }
+
 function addCoins(userId, amount) {
     const w = getWallet(userId);
     w.balance = Math.max(0, w.balance + Math.floor(amount));
     return w.balance;
 }
+
 function subCoins(userId, amount) {
     const w = getWallet(userId);
     const a = Math.floor(amount);
@@ -258,24 +386,19 @@ function subCoins(userId, amount) {
     w.balance -= a;
     return true;
 }
+
 function formatCoins(n) { return `${n} ${CURRENCY}`; }
 
 function randInt(min, max) {
     return Math.floor(Math.random() * (max - min + 1)) + min;
 }
 
-
-// Cooldowns
-const cooldowns = new Collection();
-const COOLDOWN_MS = 1000;
+const MENU = { ...DRINKS_MENU, ...FOOD_MENU };
 
 // =====================
 //   IMGFLIP — templates
 // =====================
-
 const IMGFLIP_LIST_URL = 'https://api.imgflip.com/get_memes';
-
-// Cache simple (12h)
 const memeTemplatesCache = {
     list: [], // {id, name, url, width, height, box_count}
     ts: 0
@@ -304,48 +427,43 @@ function searchMemeTemplates(templates, query = '') {
     );
 }
 
-// Utilitaires
-
 // =====================
 //    DÉCROISSANCE & SEUILS
 // =====================
-
-// Intervalle de décroissance (ex: toutes les 10 minutes)
 const DECAY_INTERVAL_MS = 10 * 60 * 1000;
-
-// Règles de décroissance par tick (valeur à ajouter à chaque attribut)
 const DECAY_RULES = {
-    intox: -1,
-    energy: -1,
-    mood: -1,
-    focus: -1,
-    hydration: -1,
-    charisma: -1,
+    ivresse: -1,
+    energie: -1,
+    humeur: -1,
+    concentration: -1,
+    hydratation: -1,
+    charisme: -1,
+    faim: -1, // NOUVEAU
+    soif: -1, // NOUVEAU
 };
-
-// Limites min/max par attribut
 const STATE_LIMITS = {
-    intox: { min: 0, max: 10 },
-    energy: { min: -5, max: 10 },
-    mood: { min: -5, max: 10 },
-    focus: { min: -5, max: 10 },
-    hydration: { min: -5, max: 10 },
-    charisma: { min: 0, max: 10 },
+    ivresse: { min: 0, max: 10 },
+    energie: { min: -5, max: 10 },
+    humeur: { min: -5, max: 10 },
+    concentration: { min: -5, max: 10 },
+    hydratation: { min: -5, max: 10 },
+    charisme: { min: 0, max: 10 },
+    faim: { min: -5, max: 10 }, // NOUVEAU
+    soif: { min: -5, max: 10 }, // NOUVEAU
+    blessure: { min: 0, max: 10 }, // NOUVEAU
 };
 
-// Contexte utilisateur pour annonces (dernier salon + derniers paliers)
-const userContext = new Map(); // userId -> { lastChannelId: string|null, stages: Set<string> }
-
+const userContext = new Map();
 function getUserCtx(userId) {
     if (!userContext.has(userId)) userContext.set(userId, { lastChannelId: null, stages: new Set() });
     return userContext.get(userId);
 }
+
 function touchUserChannel(userId, channelId) {
     const ctx = getUserCtx(userId);
     ctx.lastChannelId = channelId;
 }
 
-// Clamp dans les bornes
 function clampState(state) {
     for (const [k, lim] of Object.entries(STATE_LIMITS)) {
         if (typeof state[k] !== 'number') continue;
@@ -357,6 +475,7 @@ function clampState(state) {
 
 // === Sélecteur de boissons avec boutons ===
 const DRINKS_PER_PAGE = 10;
+const FOOD_PER_PAGE = 10;
 
 function chunk(array, size) {
     const out = [];
@@ -365,68 +484,56 @@ function chunk(array, size) {
 }
 
 function totalDrinkPages() {
-    return Math.max(1, Math.ceil(Object.keys(MENU).length / DRINKS_PER_PAGE));
+    return Math.max(1, Math.ceil(Object.keys(DRINKS_MENU).length / DRINKS_PER_PAGE));
 }
 
 function buildDrinkRows(page = 0) {
-    const keys = Object.keys(MENU);
+    const keys = Object.keys(DRINKS_MENU);
     const maxPage = totalDrinkPages() - 1;
     const p = Math.min(Math.max(0, page), maxPage);
-
     const start = p * DRINKS_PER_PAGE;
     const slice = keys.slice(start, start + DRINKS_PER_PAGE);
-
     const drinkButtons = slice.map(k =>
         new MessageButton()
             .setCustomId(`buy:${k}`)
-            .setLabel(MENU[k].label)
+            .setLabel(DRINKS_MENU[k].label)
             .setStyle('PRIMARY')
     );
-
-    // 5 boutons par ligne
     const rows = chunk(drinkButtons, 5).map(btns => new MessageActionRow().addComponents(btns));
-
-    // Navigation
     const prev = new MessageButton()
         .setCustomId(`menu:page:${p - 1}`)
         .setLabel('◀️')
         .setStyle('SECONDARY')
         .setDisabled(p <= 0);
-
     const info = new MessageButton()
         .setCustomId('menu:info')
         .setLabel(`Page ${p + 1}/${maxPage + 1}`)
         .setStyle('SECONDARY')
         .setDisabled(true);
-
     const next = new MessageButton()
         .setCustomId(`menu:page:${p + 1}`)
         .setLabel('▶️')
         .setStyle('SECONDARY')
         .setDisabled(p >= maxPage);
-
     rows.push(new MessageActionRow().addComponents(prev, info, next));
     return rows;
 }
 
 function buildDrinksEmbed(page = 0) {
-    const keys = Object.keys(MENU);
+    const keys = Object.keys(DRINKS_MENU);
     const start = page * DRINKS_PER_PAGE;
     const slice = keys.slice(start, start + DRINKS_PER_PAGE);
-
     const embed = new MessageEmbed()
         .setTitle('🍺 Sélecteur de boissons')
         .setDescription(HAPPY_HOUR.active ? 'Happy Hour en cours : -25% sur tout !' : 'Clique sur un bouton pour commander')
         .setFooter({ text: `Page ${page + 1}/${totalDrinkPages()} • ${HAPPY_HOUR.active ? 'Happy Hour -25%' : 'Taverne ouverte'}` });
-
     slice.forEach((k) => {
-        const it = MENU[k];
+        const it = DRINKS_MENU[k];
         const base = it.price;
         const price = applyHappyHour(base);
         const priceText = (HAPPY_HOUR.active && price !== base)
             ? `~~${formatPrice(base)}~~ **${formatPrice(price)}**`
             : `**${formatPrice(price)}**`;
-
         embed.addField(
             `${it.label} (\`${k}\`)`,
             [
@@ -437,7 +544,6 @@ function buildDrinksEmbed(page = 0) {
             false
         );
     });
-
     return embed;
 }
 
@@ -453,65 +559,158 @@ async function sendDrinksSelectorMessage(message, page = 0) {
     return message.channel.send({ embeds: [embed], components });
 }
 
-// --- Définition des seuils amusants ---
+// === Sélecteur de plats avec boutons (NEW) ===
+function totalFoodPages() {
+    return Math.max(1, Math.ceil(Object.keys(FOOD_MENU).length / FOOD_PER_PAGE));
+}
+
+function buildFoodRows(page = 0) {
+    const keys = Object.keys(FOOD_MENU);
+    const maxPage = totalFoodPages() - 1;
+    const p = Math.min(Math.max(0, page), maxPage);
+    const start = p * FOOD_PER_PAGE;
+    const slice = keys.slice(start, start + FOOD_PER_PAGE);
+    const foodButtons = slice.map(k =>
+        new MessageButton()
+            .setCustomId(`buyfood:${k}`)
+            .setLabel(FOOD_MENU[k].label)
+            .setStyle('PRIMARY')
+    );
+    const rows = chunk(foodButtons, 5).map(btns => new MessageActionRow().addComponents(btns));
+    const prev = new MessageButton()
+        .setCustomId(`manger:page:${p - 1}`)
+        .setLabel('◀️')
+        .setStyle('SECONDARY')
+        .setDisabled(p <= 0);
+    const info = new MessageButton()
+        .setCustomId('manger:info')
+        .setLabel(`Page ${p + 1}/${maxPage + 1}`)
+        .setStyle('SECONDARY')
+        .setDisabled(true);
+    const next = new MessageButton()
+        .setCustomId(`manger:page:${p + 1}`)
+        .setLabel('▶️')
+        .setStyle('SECONDARY')
+        .setDisabled(p >= maxPage);
+    rows.push(new MessageActionRow().addComponents(prev, info, next));
+    return rows;
+}
+
+function buildFoodEmbed(page = 0) {
+    const keys = Object.keys(FOOD_MENU);
+    const start = page * FOOD_PER_PAGE;
+    const slice = keys.slice(start, start + FOOD_PER_PAGE);
+    const embed = new MessageEmbed()
+        .setTitle('🍽️ Sélecteur de plats')
+        .setDescription('Clique sur un bouton pour commander')
+        .setFooter({ text: `Page ${page + 1}/${totalFoodPages()}` });
+    slice.forEach((k) => {
+        const it = FOOD_MENU[k];
+        const price = it.price;
+        const priceText = `**${formatPrice(price)}**`;
+        embed.addField(
+            `${it.label} (\`${k}\`)`,
+            [
+                `Prix : ${priceText}`,
+                `Meta : ${formatMeta(it.meta)}`,
+                `Effets : ${formatEffectsDelta(it.effects)}`
+            ].join('\n'),
+            false
+        );
+    });
+    return embed;
+}
+
+async function sendFoodSelectorInteraction(interaction, page = 0) {
+    const embed = buildFoodEmbed(page);
+    const components = buildFoodRows(page);
+    return interaction.reply({ embeds: [embed], components, ephemeral: false });
+}
+// === Fin des ajouts pour le sélecteur de plats ===
+
 const STAGE_RULES = [
+    // RÈGLES EXISTANTES
     {
         id: 'tipsy',
-        when: (s) => s.intox >= 3,
+        when: (s) => s.ivresse >= 3,
         up: "Vous vous sentez **légèrement pompette**. Les chansons deviennent subitement meilleures. 🍻",
         down: "Le monde arrête de tanguer. Vous reprenez vos esprits."
     },
     {
         id: 'drunk',
-        when: (s) => s.intox >= 5,
+        when: (s) => s.ivresse >= 5,
         up: "Ouhla… **bien ivre** ! Vos pas improvisent une danse inconnue. 🥴",
         down: "Vous êtes **moins ivre**. Vos pieds coopèrent à nouveau."
     },
     {
         id: 'blackout',
-        when: (s) => s.intox >= 8,
+        when: (s) => s.ivresse >= 8,
         up: "**Trou noir imminent** ! Vous cherchez vos clés… qui sont dans votre main. 🌚",
         down: "Retour de lucidité… partielle. Vous vous souvenez de votre prénom !"
     },
     {
         id: 'dehydrated',
-        when: (s) => s.hydration <= -3,
-        up: "**Déshydraté** ! Un verre d’eau ferait des miracles. 💧",
+        when: (s) => s.hydratation <= -3,
+        up: "**Déshydraté** ! Un verre d'eau ferait des miracles. 💧",
         down: "Hydratation en **amélioration**. La gorge vous remercie."
     },
     {
         id: 'exhausted',
-        when: (s) => s.energy <= -3,
+        when: (s) => s.energie <= -3,
         up: "**Épuisé**… Les tabourets deviennent anormalement confortables. 😵",
-        down: "Un regain d’entrain ! Vous tenez debout sans bâiller."
+        down: "Un regain d'entrain ! Vous tenez debout sans bâiller."
     },
     {
         id: 'euphoric',
-        when: (s) => s.mood >= 5,
+        when: (s) => s.humeur >= 5,
         up: "**Euphorique** ! Vous complimentez absolument tout le monde. ✨",
-        down: "Le sourire s’adoucit, mais reste présent."
+        down: "Le sourire s'adoucit, mais reste présent."
     },
     {
         id: 'grumpy',
-        when: (s) => s.mood <= -3,
+        when: (s) => s.humeur <= -3,
         up: "**Ronchon**… Rien ne trouve grâce à vos yeux. 😤",
-        down: "L’orage passe. Vous retrouvez un peu de bonne humeur."
+        down: "L'orage passe. Vous retrouvez un peu de bonne humeur."
     },
     {
         id: 'unfocused',
-        when: (s) => s.focus <= -3,
+        when: (s) => s.concentration <= -3,
         up: "**Distrait**… Vous perdez le fil au milieu de vos phrases. 🫥",
-        down: "L’esprit se **clarifie**. Les idées s’alignent."
+        down: "L'esprit se **clarifie**. Les idées s'alignent."
     },
     {
         id: 'silver_tongue',
-        when: (s) => s.charisma >= 5,
-        up: "**Langue d’argent** ! Vos mots brillent, les deals aussi. 💬",
+        when: (s) => s.charisme >= 5,
+        up: "**Langue d'argent** ! Vos mots brillent, les deals aussi. 💬",
         down: "Moins de verve, mais toujours charmant."
+    },
+    // NOUVELLES RÈGLES
+    {
+        id: 'hungry',
+        when: (s) => s.faim <= -3,
+        up: "Votre estomac crie famine. Il est temps de passer à table ! 😩",
+        down: "Votre estomac s'est tu. Vous êtes rassasié."
+    },
+    {
+        id: 'full',
+        when: (s) => s.faim >= 5,
+        up: "Vous avez **le ventre plein**. Une sieste s'impose. 😴",
+        down: "La digestion est finie. Vous n'êtes plus lourd."
+    },
+    {
+        id: 'thirsty',
+        when: (s) => s.soif <= -3,
+        up: "**Soif intense** ! Votre gorge est aussi sèche que le désert. 🏜️",
+        down: "Votre soif a été étanchée. La vie est belle."
+    },
+    {
+        id: 'wounded',
+        when: (s) => s.blessure >= 3,
+        up: "Vous êtes **blessé**. Chaque mouvement est une douleur. 🤕",
+        down: "Vos blessures sont **en voie de guérison**. La douleur s'estompe."
     },
 ];
 
-// Calcule l’ensemble des stages actifs
 function computeStages(state) {
     const active = new Set();
     for (const r of STAGE_RULES) {
@@ -520,7 +719,6 @@ function computeStages(state) {
     return active;
 }
 
-// Compare anciens/nouveaux stages
 function diffStages(oldSet, newSet) {
     const ups = [], downs = [];
     for (const r of STAGE_RULES) {
@@ -532,28 +730,21 @@ function diffStages(oldSet, newSet) {
     return { ups, downs };
 }
 
-// Annonce les changements de seuils
 async function announceStageChanges(client, userId, state) {
     const ctx = getUserCtx(userId);
     const oldStages = ctx.stages;
     const newStages = computeStages(state);
     const { ups, downs } = diffStages(oldStages, newStages);
-
     ctx.stages = newStages;
-
     if (!ctx.lastChannelId || (!ups.length && !downs.length)) return;
-
     const channel = client.channels.cache.get(ctx.lastChannelId);
     if (!channel || !channel.isText()) return;
-
     const username = (channel.guild?.members?.cache?.get(userId)?.displayName) ||
         (client.users.cache.get(userId)?.username) || 'Aventurier';
-
     for (const m of ups) await channel.send(`**${username}** — ${m}`);
     for (const m of downs) await channel.send(`**${username}** — ${m}`);
 }
 
-// Applique la décroissance globale
 async function applyGlobalDecay(client) {
     for (const [userId, state] of userStates.entries()) {
         for (const [k, d] of Object.entries(DECAY_RULES)) {
@@ -568,10 +759,7 @@ async function applyGlobalDecay(client) {
     }
 }
 
-// États utilisateur
 const userStates = new Map();
-
-// Emojis pour résumés d'effets
 const STATE_EMOJI = {
     ivresse: '🍺',
     energie: '⚡',
@@ -579,26 +767,28 @@ const STATE_EMOJI = {
     concentration: '🎯',
     hydratation: '💧',
     charisme: '💬',
+    faim: '🍕', // NOUVEAU
+    soif: '🥤', // NOUVEAU
+    blessure: '🩹', // NOUVEAU
 };
 
-// Valeurs par défaut d'un profil d'états
 function defaultState() {
-    return { ivresse: 0, energie: 0, humeur: 0, concentration: 0, hydratation: 0, charisme: 0 };
+    return { ivresse: 0, energie: 0, humeur: 0, concentration: 0, hydratation: 0, charisme: 0, faim: 0, soif: 0, blessure: 0 }; // NOUVEAU
 }
 
 function getUserState(userId) {
-    if (!userStates.has(userId)) userStates.set(userId, defaultState());
+    if (!userStates.has(userId)) {
+        userStates.set(userId, defaultState());
+    }
     return userStates.get(userId);
 }
 
-// Applique les effets d'une boisson
 function applyEffects(state, effects = {}) {
     for (const k of Object.keys(defaultState())) {
         if (typeof effects[k] === 'number') state[k] += effects[k];
     }
 }
 
-// Formatage lisible des effets
 function formatEffectsDelta(effects = {}) {
     const parts = [];
     for (const [k, v] of Object.entries(effects)) {
@@ -609,7 +799,6 @@ function formatEffectsDelta(effects = {}) {
     return parts.length ? parts.join(' · ') : '—';
 }
 
-// Formatage des métadonnées
 function formatMeta(meta = {}) {
     const tastes = meta.tastes?.length ? meta.tastes.join(', ') : '—';
     const type = meta.type || '—';
@@ -623,12 +812,21 @@ function getBill(userId) {
 }
 
 function formatPrice(num) { return `${num.toFixed(2)} ${CURRENCY}`; }
+
 function todaySpecial() {
-    const keys = Object.keys(MENU);
+    const keys = Object.keys(DRINKS_MENU);
     const index = new Date().getDate() % keys.length;
     const key = keys[index];
-    return { key, ...MENU[key] };
+    return { key, ...DRINKS_MENU[key] };
 }
+
+function todaySpecialFood() {
+    const keys = Object.keys(FOOD_MENU);
+    const index = new Date().getDate() % keys.length;
+    const key = keys[index];
+    return { key, ...FOOD_MENU[key] };
+}
+
 function applyHappyHour(price) { return HAPPY_HOUR.active ? price * (1 - HAPPY_HOUR.discount) : price; }
 
 function inCooldown(command, userId) {
@@ -653,14 +851,11 @@ const client = new Client({
 client.once('ready', async () => {
     console.log(`✅ Connecté en tant que ${client.user.tag}`);
     client.user.setPresence({ activities: [{ name: 'servir une tournée' }], status: 'online' });
-
-    // Enregistrement des commandes slash (guild)
     try {
         const commands = buildSlashCommands();
         const rest = new REST({ version: '9' }).setToken(process.env.DISCORD_TOKEN);
-        const guildId = process.env.GUILD_ID; // conseillez de définir GUILD_ID pour l'enregistrement côté guilde
-        const clientId = process.env.CLIENT_ID; // ID de l'application/bot
-
+        const guildId = process.env.GUILD_ID;
+        const clientId = process.env.CLIENT_ID;
         if (!clientId) {
             console.warn('⚠️ CLIENT_ID manquant. Définissez CLIENT_ID dans votre .env');
         } else if (!guildId) {
@@ -672,21 +867,14 @@ client.once('ready', async () => {
             );
             console.log('✅ Commandes slash (guilde) enregistrées.');
         }
-
-        // Pour un enregistrement global, décommentez ci-dessous
-        // await rest.put(Routes.applicationCommands(clientId), { body: commands });
-        // console.log('✅ Commandes slash (global) enregistrées.');
     } catch (err) {
         console.error('Erreur enregistrement des commandes slash:', err);
     }
-
-    // Démarre la décroissance automatique des états
     setInterval(() => {
         applyGlobalDecay(client).catch(err => console.error('Décroissance: erreur', err));
     }, DECAY_INTERVAL_MS);
 });
 
-// Accueil des nouveaux
 client.on('guildMemberAdd', (member) => {
     const channel = member.guild.systemChannel || member.guild.channels.cache.find(c => c.isText());
     if (!channel) return;
@@ -697,189 +885,52 @@ function pickRandom(arr) {
     return arr[Math.floor(Math.random() * arr.length)];
 }
 
-// Réaction aux mots-clés
-const TRIGGERS = [
-    {
-        key: 'sante',
-        pattern: /(?:sant[eé]|cheers|tchin)/gi,
-        reply: () => pickRandom([
-            `${randomToast()} 🍻`,
-            "À la vôtre ! 🍺",
-            "Attention, la mousse tache ! 🍺",
-            "Mais pas des \`Server error, please try again.\`",
-            "Que la mousse vous soit légère ! 🍺"
-        ])
-    },
-    {
-        key: 'soif',
-        pattern: /(?:soif|assoiff[eé]e?)/gi,
-        reply: () => pickRandom([
-            `Ça tombe bien, la maison regorge de breuvages ! Tape \`${PREFIX} menu\` ou /boissons.`,
-            "Assoiffé ? Une tournée arrive bientôt !",
-            "J'arrive !!",
-            "Le tavernier a déjà sorti les chopes !"
-        ])
-    },
-    {
-        key: 'cafe',
-        pattern: /(?:caf[eé]|espresso|latte|cappuccino)/gi,
-        reply: () => pickRandom([
-            "Un petit coup de fouet ? \`espresso\`, \`cafe_latte\` ou \`cappuccino\` t’attendent !",
-            "Rien de tel qu’un bon café pour repartir à l’aventure ! On s'en prend un ? ☕",
-            "Un café matin, midi, et soir, rien de mieux pour péter la forme ! On passe commande ?",
-            "Juste un café de plus, ça fait pas de mal tu sais.",
-            "Je viens d'entendre mon mot préféré."
-        ])
-    },
-    {
-        key: 'biere',
-        pattern: /(?:biere|bière)/gi,
-        reply: () => pickRandom([
-            "Une cervoise, une !",
-            "Y a deux types de personnes, ceux qui aiment la bière, et les menteurs.",
-            "Ça tombe bien, j'en ai plein ! Que veux-tu ? Commande avec /boissons ou /commander.",
-            "Tu payes ta tournée ?"
-        ])
-    },
-    {
-        key: 'the',
-        pattern: /(?:th[eé]|thé)/gi,
-        reply: () => pickRandom([
-            "Feuilles infusées, esprit affûté. Essaie un \`the\` ou un \`ice_tea_peche\` !",
-            "Un peu de thé ? Voilà qui calme l’esprit. 🍵",
-            "Infusion chaude ou glacée, au choix, ami voyageur. Je prendrai un café pour t'accompagner.",
-            "Personnellement ce n'est pas ma tasse de thé mais tu peux toujours en commander."
-        ])
-    },
-    {
-        key: 'cocktail',
-        pattern: /(?:mojito|sangria|pi(?:n|ñ)a colada|cocktail)/gi,
-        reply: () => pickRandom([
-            "Le bar à cocktails est ouvert : \`mojito\`, \`pina_colada\`, \`sangria\`… 🍹",
-            "Un cocktail exotique, ça te dit ?",
-            "Secoué, pas remué ! 🍸"
-        ])
-    },
-    {
-        key: 'merci',
-        pattern: /(?:merci|thanks|thx)/gi,
-        reply: () => pickRandom([
-            `Avec plaisir ! Et n’oublie pas de vérifier ton \`${PREFIX} addition\` 😉`,
-            "Toujours heureux de rendre service !",
-            "Pas de quoi, c’est offert par la maison !"
-        ])
-    },
-    {
-        key: 'bonjour_tavernier',
-        pattern: /^(?:\s*)(?:bonjour|salut|coucou|hey)\s+tavernier\b[!?.]*\s*$/iu,
-        reply: () => pickRandom([
-            randomToast(),
-            "Bienvenue voyageur ! Qu'est-ce que je te sers ? 🍻",
-            "Salutations ! Que veux-tu boire ?",
-            "Salut à toi ! Installe-toi donc. Que puis-je faire pour toi ?"
-        ])
-    },
-    {
-        key: 'gg',
-        pattern: /(?:bravo|bien (?:jou[eé])|gg)/gi,
-        reply: () => pickRandom([
-            "🥳 À cette victoire ! Une tournée ?",
-            "Bien joué ! La maison offre la prochaine !",
-            "Victoire digne d’un toast ! 🍺"
-        ])
-    },
-];
-
 function randomToast() { return TOASTS[Math.floor(Math.random() * TOASTS.length)]; }
 function randomLore() { return LORE[Math.floor(Math.random() * LORE.length)]; }
 
-// Anti-spam pour les triggers
-const triggerCooldowns = new Map(); // Map<userId, Map<key, expireTimestamp>>
-const TRIGGER_COOLDOWN_MS = 1000; // 15s par mot-clé par utilisateur
-
-function inTriggerCooldown(userId, key) {
-    if (!triggerCooldowns.has(userId)) triggerCooldowns.set(userId, new Map());
-    const userMap = triggerCooldowns.get(userId);
-    const now = Date.now();
-    const expire = userMap.get(key) || 0;
-    if (now < expire) return true;
-    userMap.set(key, now + TRIGGER_COOLDOWN_MS);
-    return false;
+function transformDrunkText(text) {
+    return text.split('').map(c => {
+        if (Math.random() < 0.5) {
+            return c.toUpperCase();
+        } else {
+            return c.toLowerCase();
+        }
+    }).join('');
 }
 
-// ----------------------
-//        MESSAGES
-// ----------------------
+function transformEnergeticText(text) {
+    const emoji = '⚡';
+    return text.split(' ').map(word => word + emoji).join(' ');
+}
+
+function transformMessageText(userId, text) {
+    const state = getUserState(userId);
+    let transformedText = text;
+    if (state.ivresse > 10) {
+        transformedText = transformDrunkText(transformedText);
+    }
+    if (state.energie > 10) {
+        transformedText = transformEnergeticText(transformedText);
+    }
+    return transformedText;
+}
+
 client.on('messageCreate', async (message) => {
     if (message.author.bot || !message.guild) return;
-
-    for (const t of TRIGGERS) {
-        if (t.pattern.test(message.content)) {
-            if (inTriggerCooldown(message.author.id, t.key)) return;
-            await message.reply(t.reply());
-            return;
-        }
-    }
-
-    if (!message.content.toLowerCase().startsWith(PREFIX)) return;
-
-    const args = message.content.slice(PREFIX.length).trim().split(/\s+/);
-    const command = (args.shift() || '').toLowerCase();
-
-    if (!command) return sendHelp(message);
-
-    const cd = inCooldown(command, message.author.id);
-    if (cd) return message.reply(`Doucement, voyageur ! Patiente encore ${cd}s avant de relancer \`${command}\`.`);
-
-    switch (command) {
-        case 'menu': return sendMenu(message);
-        case 'salut': case 'bonjour': return greet(message);
-        case 'commander': return orderDrinkMessage(message, args);
-        case 'boissons': return sendDrinksSelectorMessage(message, 0);
-        case 'addition': return showBill(message);
-        case 'payer': return payBill(message);
-        case 'happyhour': return toggleHappyHourMessage(message, args);
-        case 'histoire': return message.reply(randomLore());
-        case 'toast': return message.reply(randomToast());
-        case 'dujour': return specialOfDay(message);
-        case 'des': return rollDiceMessage(message, args);
-        case 'pileface': return coinFlipMessage(message);
-        case 'meme': return createMemeMessage(message, args);
-        case 'memes': return listMemesMessage(message, args.join(' '));
-        case 'help': case 'aide': return sendHelp(message);
-        case 'solde': return balanceMessage(message);
-        case 'daily': return dailyMessage(message);
-        case 'travail': return workMessage(message);
-        case 'don': return donateMessage(message, args);
-        default: return message.reply(`Je n'ai pas compris, ami. Tape \`${PREFIX} help\` pour la carte et les commandes.`);
+    const userId = message.author.id;
+    const transformedText = transformMessageText(userId, message.content);
+    if (transformedText !== message.content) {
+        await message.delete();
+        await message.channel.send(`${message.author}: ${transformedText}`);
     }
 });
 
-// ----------------------
-//      INTERACTIONS
-// ----------------------
-
 client.on('interactionCreate', async (interaction) => {
-    // -------- Autocomplete --------
     if (interaction.isAutocomplete()) {
         try {
-            const focused = interaction.options.getFocused(true); // { name, value }
+            const focused = interaction.options.getFocused(true);
             const q = (focused.value || '').toLowerCase();
-
-            // Autocomplete boissons (commande /commander)
-            if (interaction.commandName === 'commander' && focused.name === 'boisson') {
-                const all = Object.entries(MENU).map(([key, item]) => ({
-                    name: `${item.label} (${key})`,
-                    value: key
-                }));
-                const filtered = all
-                    .filter(c => c.name.toLowerCase().includes(q) || c.value.toLowerCase().includes(q))
-                    .slice(0, 25);
-                await interaction.respond(filtered);
-                return;
-            }
-
-            // Autocomplete templates Imgflip (commande /meme)
+            // L'autocomplétion pour /commander a été retirée
             if (interaction.commandName === 'meme' && focused.name === 'template_id') {
                 const templates = await getMemeTemplates();
                 const filtered = searchMemeTemplates(templates, q)
@@ -891,7 +942,6 @@ client.on('interactionCreate', async (interaction) => {
                 await interaction.respond(filtered.length ? filtered : [{ name: 'Aucun résultat', value: q || ' ' }]);
                 return;
             }
-
         } catch (e) {
             console.error('Autocomplete error:', e);
             try { await interaction.respond([{ name: 'Erreur autocomplétion', value: 'err' }]); } catch { }
@@ -899,31 +949,35 @@ client.on('interactionCreate', async (interaction) => {
         return;
     }
 
-    // Boutons (achat + pagination)
     if (interaction.isButton()) {
         try {
             const id = interaction.customId || '';
-            // Achat : buy:<key>
             if (id.startsWith('buy:')) {
                 const key = id.split(':')[1];
-                if (!MENU[key]) return interaction.reply({ content: 'Boisson inconnue.', ephemeral: true });
-                // Réutilise la logique existante
-                return orderDrinkInteraction(interaction, key);
+                if (!MENU[key]) return interaction.reply({ content: 'Article inconnu.', ephemeral: true });
+                return orderItemInteraction(interaction, key);
             }
-
-            // Pagination : menu:page:<n>
             if (id.startsWith('menu:page:')) {
                 const n = parseInt(id.split(':')[2], 10);
                 const embed = buildDrinksEmbed(n);
                 const components = buildDrinkRows(n);
                 return interaction.update({ embeds: [embed], components });
             }
-
-            // Info (inactif)
-            if (id === 'menu:info') {
+            // Gère les boutons pour le nouveau menu de plats
+            if (id.startsWith('buyfood:')) {
+                const key = id.split(':')[1];
+                if (!FOOD_MENU[key]) return interaction.reply({ content: 'Plat inconnu.', ephemeral: true });
+                return orderItemInteraction(interaction, key);
+            }
+            if (id.startsWith('manger:page:')) {
+                const n = parseInt(id.split(':')[2], 10);
+                const embed = buildFoodEmbed(n);
+                const components = buildFoodRows(n);
+                return interaction.update({ embeds: [embed], components });
+            }
+            if (id === 'menu:info' || id === 'manger:info') {
                 return interaction.deferUpdate();
             }
-
             return interaction.reply({ content: 'Action inconnue.', ephemeral: true });
         } catch (e) {
             console.error('Button error:', e);
@@ -932,28 +986,24 @@ client.on('interactionCreate', async (interaction) => {
             }
             return interaction.reply({ content: 'Erreur lors du traitement du bouton.', ephemeral: true });
         }
-        // Ne pas continuer, on a géré le bouton
     }
 
-    // -------- Commands --------
     if (!interaction.isCommand()) return;
-
     const name = interaction.commandName;
     const userId = interaction.user.id;
     const cd = inCooldown(name, userId);
     if (cd) {
         return interaction.reply({ content: `Doucement, voyageur ! Patiente encore ${cd}s avant de relancer \`${name}\`.`, ephemeral: true });
     }
-
     try {
         switch (name) {
             case 'menu':
                 return sendMenuInteraction(interaction);
             case 'salut':
                 return greetInteraction(interaction);
-            case 'commander': {
-                const drink = interaction.options.getString('boisson', true);
-                return orderDrinkInteraction(interaction, drink);
+            // La commande 'commander' a été retirée
+            case 'manger': {
+                return sendFoodSelectorInteraction(interaction, 0);
             }
             case 'boissons':
                 return sendDrinksSelectorInteraction(interaction, 0);
@@ -962,20 +1012,24 @@ client.on('interactionCreate', async (interaction) => {
             case 'payer':
                 return payBillInteraction(interaction);
             case 'happyhour': {
-                const state = interaction.options.getString('etat'); // on/off/empty
+                const state = interaction.options.getString('etat');
                 return toggleHappyHourInteraction(interaction, state);
             }
-            case 'solde': return balanceInteraction(interaction);
-            case 'daily': return dailyInteraction(interaction);
-            case 'travail': return workInteraction(interaction);
-            case 'don': return donateInteraction(interaction);
+            case 'solde':
+                return balanceInteraction(interaction);
+            case 'daily':
+                return dailyInteraction(interaction);
+            case 'travail':
+                return workInteraction(interaction);
+            case 'don':
+                return donateInteraction(interaction);
             case 'histoire':
                 return interaction.reply(randomLore());
             case 'toast':
                 return interaction.reply(randomToast());
             case 'dujour':
                 return specialOfDayInteraction(interaction);
-            case 'etat':
+            case 'state':
                 return stateInteraction(interaction);
             case 'des': {
                 const pattern = interaction.options.getString('lancer') || '1d20';
@@ -1008,7 +1062,6 @@ client.on('interactionCreate', async (interaction) => {
     }
 });
 
-// --- Commandes (communes) ---
 function badgeFor(meta) {
     const alco = meta?.alcoholic ? '🍷' : '🥤';
     const type = meta?.type ? `• ${meta.type}` : '';
@@ -1016,251 +1069,31 @@ function badgeFor(meta) {
     return `${alco} ${type} ${taste}`.trim();
 }
 
-function sendMenu(message) {
-    const special = todaySpecial();
-    const lines = Object.entries(MENU).map(([key, item]) => {
+function sendMenuInteraction(interaction) {
+    const specialDrink = todaySpecial();
+    const specialFood = todaySpecialFood();
+
+    const drinkLines = Object.entries(DRINKS_MENU).map(([key, item]) => {
         const base = item.price;
         const price = applyHappyHour(base);
-        const hh = HAPPY_HOUR.active && price !== base
-            ? ` ~~${formatPrice(base)}~~ **${formatPrice(price)}**`
-            : ` **${formatPrice(price)}**`;
+        const hh = HAPPY_HOUR.active && price !== base ? ` ~~${formatPrice(base)}~~ **${formatPrice(price)}**` : ` **${formatPrice(price)}**`;
         const badges = badgeFor(item.meta);
         return `• **${item.label}** (\`${key}\`) —${hh}\n   > ${badges}`;
     });
 
+    const foodLines = Object.entries(FOOD_MENU).map(([key, item]) => {
+        const price = item.price;
+        const badges = badgeFor(item.meta);
+        return `• **${item.label}** (\`${key}\`) — **${formatPrice(price)}**\n   > ${badges}`;
+    });
+
     const embed = new MessageEmbed()
         .setTitle('🍺 Carte de la Taverne')
-        .setDescription(lines.join('\n'))
-        .addField('Spécial du jour', `**${special.label}** (\`${special.key}\`) à ${formatPrice(applyHappyHour(special.price))}`)
+        .addField('Boissons', drinkLines.join('\n'))
+        .addField('Spécial du jour (Boisson)', `**${specialDrink.label}** (\`${specialDrink.key}\`) à ${formatPrice(applyHappyHour(specialDrink.price))}`)
+        .addField('Plats', foodLines.join('\n'))
+        .addField('Spécial du jour (Plat)', `**${specialFood.label}** (\`${specialFood.key}\`) à ${formatPrice(specialFood.price)}`)
         .setFooter({ text: HAPPY_HOUR.active ? 'Happy Hour en cours — -25% sur tout !' : 'Bonnes manières et bons récits toujours bienvenus.' });
-
-    return message.channel.send({ embeds: [embed] });
-}
-
-function greet(message) {
-    const nickname = message.member?.nickname || message.author.username;
-    return message.channel.send(`Salut, ${nickname} ! Installe-toi, que puis-je te servir ?`);
-}
-
-function orderDrinkMessage(message, args) {
-    const key = (args[0] || '').toLowerCase();
-    if (!key || !MENU[key]) {
-        return message.reply(`Je ne trouve pas cette boisson. Tape \`${PREFIX} menu\` pour voir la carte.`);
-    }
-    const item = MENU[key];
-    const price = applyHappyHour(item.price);
-
-    const bill = getBill(message.author.id);
-    bill.items.push({ key, label: item.label, price });
-    bill.subtotal += price;
-
-    const state = getUserState(message.author.id);
-    applyEffects(state, item.effects);
-    clampState(state);
-
-    touchUserChannel(message.author.id, message.channel.id);
-    announceStageChanges(client, message.author.id, state).catch(() => { });
-
-    const metaLine = formatMeta(item.meta);
-    const effectsLine = formatEffectsDelta(item.effects);
-
-    return message.channel.send(
-        `Une **${item.label}** pour ${message.member?.displayName || message.author.username} ! ` +
-        `Ça fera ${formatPrice(price)}.\n` +
-        `> ${metaLine}\n` +
-        `> Effets: ${effectsLine}`
-    );
-}
-
-function calcTotals(subtotal) { const tax = subtotal * TAX_RATE; return { tax, total: subtotal + tax }; }
-
-function showBill(message) {
-    const bill = getBill(message.author.id);
-    if (!bill.items.length) return message.reply("Votre note est vierge pour l'instant.");
-    const { tax, total } = calcTotals(bill.subtotal);
-    const lines = bill.items.map((it, i) => `${i + 1}. ${it.label} — ${formatPrice(it.price)}`);
-    const embed = new MessageEmbed()
-        .setTitle(`🧾 Addition de ${message.member?.displayName || message.author.username}`)
-        .setDescription(lines.join('\n'))
-        .addField('Sous-total', formatPrice(bill.subtotal), true)
-        .addField('Taxe (10%)', formatPrice(tax), true)
-        .addField('Total', `**${formatPrice(total)}**`, false);
-    return message.channel.send({ embeds: [embed] });
-}
-
-function payBill(message) {
-    const bill = getBill(message.author.id);
-    if (!bill.items.length) return message.reply("Rien à régler.");
-    const { total } = calcTotals(bill.subtotal);
-
-    const ok = subCoins(message.author.id, Math.round(total));
-    if (!ok) {
-        const bal = getWallet(message.author.id).balance;
-        return message.reply(`Solde insuffisant : il te faut **${formatPrice(total)}**, tu as **${formatCoins(bal)}**.`);
-    }
-
-    tabs.set(message.author.id, { items: [], subtotal: 0 });
-    const bal = getWallet(message.author.id).balance;
-    return message.channel.send(`Merci pour ta visite ! Tu as réglé **${formatPrice(total)}**. Nouveau solde : **${formatCoins(bal)}**.`);
-}
-
-function balanceMessage(message) {
-    const w = getWallet(message.author.id);
-    return message.reply(`Ton solde est de **${formatCoins(w.balance)}**.`);
-}
-
-function dailyMessage(message) {
-    const w = getWallet(message.author.id);
-    const now = Date.now();
-    const last = w.lastDaily || 0;
-    const elapsed = now - last;
-    const oneDay = 24 * 60 * 60 * 1000;
-
-    if (elapsed < oneDay) {
-        const rest = Math.ceil((oneDay - elapsed) / (60 * 1000));
-        return message.reply(`Tu as déjà récupéré ta récompense quotidienne. Reviens dans ~${rest} min.`);
-    }
-
-    // streak si < 48h, sinon reset
-    if (last && elapsed <= 2 * oneDay) w.streak = (w.streak || 0) + 1;
-    else w.streak = 1;
-
-    const base = randInt(DAILY_MIN, DAILY_MAX);
-    const bonus = Math.min(20, w.streak * 2); // +2 par jour de série, cap à +20
-    const gain = base + bonus;
-
-    addCoins(message.author.id, gain);
-    w.lastDaily = now;
-
-    return message.reply(`Récompense quotidienne : **+${formatCoins(gain)}** (streak x${w.streak}, bonus ${bonus} 🪙).`);
-}
-
-function workMessage(message) {
-    const now = Date.now();
-    const exp = workCooldowns.get(message.author.id) || 0;
-    if (now < exp) {
-        const left = Math.ceil((exp - now) / (60 * 1000));
-        return message.reply(`Doucement l'ami, reviens travailler dans ~${left} min.`);
-    }
-    const gain = randInt(WORK_MIN, WORK_MAX);
-    addCoins(message.author.id, gain);
-    workCooldowns.set(message.author.id, now + WORK_COOLDOWN_MS);
-    return message.reply(`Tu donnes un coup de main au comptoir et gagnes **+${formatCoins(gain)}**.`);
-}
-
-function donateMessage(message, args) {
-    // Usage: !tavernier don @user 50
-    const target = message.mentions.users.first();
-    const amount = parseInt(args[1] || '0', 10);
-    if (!target || isNaN(amount) || amount <= 0) {
-        return message.reply(`Usage : \`${PREFIX} don @utilisateur <montant>\``);
-    }
-    if (target.id === message.author.id) return message.reply("Tu ne peux pas te donner des pièces à toi-même 😄");
-
-    if (!subCoins(message.author.id, amount)) {
-        const bal = getWallet(message.author.id).balance;
-        return message.reply(`Solde insuffisant. Il te reste **${formatCoins(bal)}**.`);
-    }
-    addCoins(target.id, amount);
-    const bal = getWallet(message.author.id).balance;
-    return message.channel.send(`${message.author} a donné **${formatCoins(amount)}** à ${target}. Nouveau solde de ${message.member?.displayName || message.author.username} : **${formatCoins(bal)}**.`);
-}
-
-function toggleHappyHourMessage(message, args) {
-    if (!message.member.permissions.has('MANAGE_GUILD')) return message.reply("Seul le patron peut annoncer l'Happy Hour !");
-    if (!args[0]) return message.reply(`Happy Hour est **${HAPPY_HOUR.active ? 'activée' : 'désactivée'}**.`);
-    const on = args[0].toLowerCase();
-    if (on === 'on') { HAPPY_HOUR.active = true; return message.channel.send('🔔 Happy Hour ! -25% sur tout !'); }
-    if (on === 'off') { HAPPY_HOUR.active = false; return message.channel.send("Happy Hour terminée."); }
-}
-
-function stateToLines(state) {
-    return Object.entries(state).map(([k, v]) => `${STATE_EMOJI[k] || ''} ${k}: **${v}**`).join('\n');
-}
-
-function stateInteraction(interaction) {
-    const st = getUserState(interaction.user.id);
-    if (!st) return interaction.reply({ content: 'Aucun état enregistré pour vous pour l’instant.', ephemeral: true });
-    return interaction.reply({
-        content: `Vos états actuels :\n${stateToLines(st)}`,
-        ephemeral: true
-    });
-}
-
-function specialOfDay(message) {
-    const sp = todaySpecial();
-    return message.reply(`Le spécial du jour est **${sp.label}** (\`${sp.key}\`) à ${formatPrice(applyHappyHour(sp.price))}.`);
-}
-
-function rollDiceMessage(message, args) {
-    const input = (args[0] || '1d20').toLowerCase();
-    const match = input.match(/(\d*)d(\d+)/);
-    if (!match) return message.reply('Format invalide. Exemple: `!tavernier des 2d6`');
-    let count = parseInt(match[1] || '1', 10);
-    const faces = parseInt(match[2], 10);
-    if (count > 20) count = 20;
-    const rolls = Array.from({ length: count }, () => 1 + Math.floor(Math.random() * faces));
-    const sum = rolls.reduce((a, b) => a + b, 0);
-    return message.reply(`🎲 ${input} → [ ${rolls.join(', ')} ] = **${sum}**`);
-}
-
-function coinFlipMessage(message) {
-    const r = Math.random() < 0.5 ? 'Pile' : 'Face';
-    return message.reply(`🪙 **${r}** !`);
-}
-
-async function createMemeMessage(message, args) {
-    // Usage: !tavernier meme <template_id> | haut | bas
-    const parts = args.join(' ').split('|').map(p => p.trim());
-    if (parts.length < 3) return message.reply("Format: `!tavernier meme <template_id> | texte haut | texte bas`");
-    const template_id = parts[0];
-    const text0 = parts[1];
-    const text1 = parts[2];
-
-    return createMemeCore({ send: (content) => message.channel.send(content), reply: (content) => message.reply(content) }, message.author.id, template_id, text0, text1);
-}
-
-// >>> NOUVEAU : liste des templates (message) <<<
-async function listMemesMessage(message, query) {
-    try {
-        const templates = await getMemeTemplates();
-        const filtered = searchMemeTemplates(templates, query).slice(0, 15);
-        if (!filtered.length) return message.reply('Aucun template trouvé pour ta recherche.');
-        const lines = filtered.map(t => `• **${t.name}** — ID: \`${t.id}\` (${t.box_count} zones)`);
-        const embed = new MessageEmbed()
-            .setTitle('🖼️ Templates Imgflip')
-            .setDescription(lines.join('\n'))
-            .setFooter({ text: query ? `Filtré par: ${query}` : 'Astuce: utilise /meme et commence à taper pour l’autocomplétion.' })
-            .setThumbnail(filtered[0].url); // <<< miniature du 1er résultat
-        return message.channel.send({ embeds: [embed] });
-    } catch (e) {
-        console.error('listMemesMessage error:', e);
-        return message.reply(`Impossible de récupérer les templates: ${e.message}`);
-    }
-}
-
-function sendHelp(message) {
-    const embed = new MessageEmbed()
-        .setTitle('👨‍🍳 Le Tavernier — Aide')
-        .setDescription(`Préfixe: \`${PREFIX}\`\n\n**Commandes**\n• \`menu\`, \`commander <boisson>\`, \`addition\`, \`payer\`\n• \`dujour\`, \`histoire\`, \`toast\`\n• \`des [XdY]\`, \`pileface\`\n• \`meme <template_id> | haut | bas\` — Génère un mème via Imgflip\n• \`memes [recherche]\` — Liste/recherche des templates Imgflip\n• \`happyhour on|off\` (Admin)\nAinsi que leurs équivalents en commandes slash.`);
-    return message.channel.send({ embeds: [embed] });
-}
-
-// --- Implémentations pour les interactions ---
-function sendMenuInteraction(interaction) {
-    const special = todaySpecial();
-    const lines = Object.entries(MENU).map(([key, item]) => {
-        const base = item.price;
-        const price = applyHappyHour(base);
-        const hh = HAPPY_HOUR.active && price !== base ? ` ~~${formatPrice(base)}~~ **${formatPrice(price)}**` : ` **${formatPrice(price)}**`;
-        return `• **${item.label}** (\`${key}\`) —${hh}`;
-    });
-    const embed = new MessageEmbed()
-        .setTitle('🍺 Carte de la Taverne')
-        .setDescription(lines.join('\n'))
-        .addField('Spécial du jour', `**${special.label}** (\`${special.key}\`) à ${formatPrice(applyHappyHour(special.price))}`)
-        .setFooter({ text: HAPPY_HOUR.active ? 'Happy Hour en cours — -25% sur tout !' : 'Bonnes manières et bons récits toujours bienvenus.' });
-
     return interaction.reply({ embeds: [embed] });
 }
 
@@ -1269,30 +1102,35 @@ function greetInteraction(interaction) {
     return interaction.reply(`Salut, ${nickname} ! Installe-toi, que puis-je te servir ?`);
 }
 
-function orderDrinkInteraction(interaction, key) {
+function orderItemInteraction(interaction, key) {
     key = (key || '').toLowerCase();
-    if (!key || !MENU[key]) {
-        return interaction.reply({ content: `Je ne trouve pas cette boisson. Utilise /menu pour voir la carte.`, ephemeral: true });
+    let item;
+    let isDrink = false;
+    let isFood = false;
+    if (DRINKS_MENU[key]) {
+        item = DRINKS_MENU[key];
+        isDrink = true;
+    } else if (FOOD_MENU[key]) {
+        item = FOOD_MENU[key];
+        isFood = true;
+    } else {
+        return interaction.reply({ content: `Je ne trouve pas cet article. Utilise /menu pour voir la carte.`, ephemeral: true });
     }
-    const item = MENU[key];
-    const price = applyHappyHour(item.price);
-
+    const price = isDrink ? applyHappyHour(item.price) : item.price;
     const bill = getBill(interaction.user.id);
     bill.items.push({ key, label: item.label, price });
     bill.subtotal += price;
-
     const state = getUserState(interaction.user.id);
     applyEffects(state, item.effects);
     clampState(state);
-
     touchUserChannel(interaction.user.id, interaction.channelId);
     announceStageChanges(client, interaction.user.id, state).catch(() => { });
-
     const metaLine = formatMeta(item.meta);
     const effectsLine = formatEffectsDelta(item.effects);
-
+    const itemType = isDrink ? 'boisson' : 'plat';
+    const article = isDrink ? 'Une' : 'Un';
     return interaction.reply(
-        `Une **${item.label}** pour ${interaction.member?.nick || interaction.user.username} ! ` +
+        `${article} **${item.label}** pour ${interaction.member?.nickname || interaction.user.username} ! ` +
         `Ça fera ${formatPrice(price)}.\n` +
         `> ${metaLine}\n` +
         `> Effets: ${effectsLine}`
@@ -1305,7 +1143,7 @@ function showBillInteraction(interaction) {
     const { tax, total } = calcTotals(bill.subtotal);
     const lines = bill.items.map((it, i) => `${i + 1}. ${it.label} — ${formatPrice(it.price)}`);
     const embed = new MessageEmbed()
-        .setTitle(`🧾 Addition de ${interaction.member?.nick || interaction.user.username}`)
+        .setTitle(`🧾 Addition de ${interaction.member?.nickname || interaction.user.username}`)
         .setDescription(lines.join('\n'))
         .addField('Sous-total', formatPrice(bill.subtotal), true)
         .addField('Taxe (10%)', formatPrice(tax), true)
@@ -1317,13 +1155,11 @@ function payBillInteraction(interaction) {
     const bill = getBill(interaction.user.id);
     if (!bill.items.length) return interaction.reply({ content: 'Rien à régler.', ephemeral: true });
     const { total } = calcTotals(bill.subtotal);
-
     const ok = subCoins(interaction.user.id, Math.round(total));
     if (!ok) {
         const bal = getWallet(interaction.user.id).balance;
         return interaction.reply({ content: `Solde insuffisant : il te faut **${formatPrice(total)}**, tu as **${formatCoins(bal)}**.`, ephemeral: true });
     }
-
     tabs.set(interaction.user.id, { items: [], subtotal: 0 });
     const bal = getWallet(interaction.user.id).balance;
     return interaction.reply(`Merci pour votre visite ! Vous avez réglé **${formatPrice(total)}**. Nouveau solde : **${formatCoins(bal)}**.`);
@@ -1335,26 +1171,21 @@ function balanceInteraction(interaction) {
 }
 
 function dailyInteraction(interaction) {
-    // Réutilise la version message avec un petit wrapper
     const w = getWallet(interaction.user.id);
     const now = Date.now();
     const last = w.lastDaily || 0;
     const elapsed = now - last;
     const oneDay = 24 * 60 * 60 * 1000;
-
     if (elapsed < oneDay) {
         const rest = Math.ceil((oneDay - elapsed) / (60 * 1000));
         return interaction.reply({ content: `Récompense déjà prise. Reviens dans ~${rest} min.`, ephemeral: true });
     }
     if (last && elapsed <= 2 * oneDay) w.streak = (w.streak || 0) + 1; else w.streak = 1;
-
     const base = randInt(DAILY_MIN, DAILY_MAX);
     const bonus = Math.min(20, w.streak * 2);
     const gain = base + bonus;
-
     addCoins(interaction.user.id, gain);
     w.lastDaily = now;
-
     return interaction.reply(`Récompense quotidienne : **+${formatCoins(gain)}** (streak x${w.streak}, bonus ${bonus} 🪙).`);
 }
 
@@ -1389,7 +1220,6 @@ async function donateInteraction(interaction) {
     return interaction.reply(`${interaction.user} a donné **${formatCoins(amount)}** à ${user}. Nouveau solde : **${formatCoins(bal)}**.`);
 }
 
-
 function toggleHappyHourInteraction(interaction, state) {
     if (!interaction.memberPermissions || !interaction.memberPermissions.has('MANAGE_GUILD')) {
         return interaction.reply({ content: "Seul le patron peut annoncer l'Happy Hour !", ephemeral: true });
@@ -1403,9 +1233,29 @@ function toggleHappyHourInteraction(interaction, state) {
     return interaction.reply({ content: 'Valeur attendue: on/off', ephemeral: true });
 }
 
+function stateInteraction(interaction) {
+    const st = getUserState(interaction.user.id);
+    if (!st) return interaction.reply({
+        content: 'Aucun état enregistré pour vous pour l\'instant.', ephemeral: true
+    });
+    return interaction.reply({
+        content: `Vos états actuels :\n${stateToLines(st)}`,
+        ephemeral: true
+    });
+}
+
+function stateToLines(state) {
+    return Object.entries(state).map(([k, v]) => `${STATE_EMOJI[k] || ''} ${k}: **${v}**`).join('\n');
+}
+
 function specialOfDayInteraction(interaction) {
-    const sp = todaySpecial();
-    return interaction.reply(`Le spécial du jour est **${sp.label}** (\`${sp.key}\`) à ${formatPrice(applyHappyHour(sp.price))}.`);
+    const spDrink = todaySpecial();
+    const spFood = todaySpecialFood();
+    const embed = new MessageEmbed()
+        .setTitle('⭐ Spéciaux du jour')
+        .addField('Boisson', `**${spDrink.label}** (\`${spDrink.key}\`) à ${formatPrice(applyHappyHour(spDrink.price))}`)
+        .addField('Plat', `**${spFood.label}** (\`${spFood.key}\`) à ${formatPrice(spFood.price)}`);
+    return interaction.reply({ embeds: [embed] });
 }
 
 function rollDiceInteraction(interaction, input) {
@@ -1437,7 +1287,6 @@ async function createMemeCore(adapter, userId, template_id, text0, text1) {
     params.append('password', process.env.IMGFLIP_PASS);
     params.append('text0', text0);
     params.append('text1', text1);
-
     try {
         const res = await fetch(url, { method: 'POST', body: params });
         const data = await res.json();
@@ -1448,7 +1297,6 @@ async function createMemeCore(adapter, userId, template_id, text0, text1) {
     }
 }
 
-// >>> NOUVEAU : liste des templates (slash) <<<
 async function listMemesInteraction(interaction, query = '', max = 10) {
     try {
         const templates = await getMemeTemplates();
@@ -1458,48 +1306,39 @@ async function listMemesInteraction(interaction, query = '', max = 10) {
         const embed = new MessageEmbed()
             .setTitle('🖼️ Templates Imgflip')
             .setDescription(lines.join('\n'))
-            .setFooter({ text: query ? `Filtré par: ${query}` : 'Astuce: commence à taper dans /meme pour l’autocomplétion.' })
-            .setThumbnail(filtered[0].url); // <<< miniature du 1er résultat
+            .setFooter({
+                text: query ? `Filtré par: ${query}` : 'Astuce: commence à taper dans /meme pour l\'autocomplétion.'
+            })
+            .setThumbnail(filtered[0].url);
         return interaction.reply({ embeds: [embed], ephemeral: false });
     } catch (e) {
         console.error('listMemesInteraction error:', e);
         return interaction.reply({ content: `Impossible de récupérer les templates: ${e.message}`, ephemeral: true });
     }
+
 }
 
 function helpInteraction(interaction) {
     const embed = new MessageEmbed()
         .setTitle('👨‍🍳 Le Tavernier — Aide')
-        .setDescription(`Tu peux utiliser les commandes via /<nom> ou avec le préfixe \`${PREFIX}\`.\n\n**Commandes disponibles**\n• /menu, /commander, /addition, /payer\n• /dujour, /histoire, /toast\n• /des, /pileface\n• /meme (autocomplétion pour \`template_id\`)\n• /memes (liste/recherche des templates)\n• /happyhour (Admin)`);
+        .setDescription(`Tu peux utiliser les commandes via /<nom>.\n\n**Commandes disponibles**\n• /menu, /manger, /addition, /payer\n• /boissons, /solde, /daily, /travail, /don\n• /dujour, /histoire, /toast, /state\n• /des, /pileface\n• /meme (autocomplétion pour \`template_id\`)\n• /memes (liste/recherche des templates)\n• /happyhour (Admin)`);
     return interaction.reply({ embeds: [embed], ephemeral: true });
 }
 
-// ----------------------
-//   CONSTRUCTION DES SLASH COMMANDS
-// ----------------------
 function buildSlashCommands() {
-    // Construction dynamique des choix de boissons
     const commands = [
         {
             name: 'menu',
-            description: 'Afficher la carte des boissons',
+            description: 'Afficher la carte des boissons et plats',
         },
         {
             name: 'salut',
             description: 'Dire bonjour au tavernier',
         },
+        // La commande 'commander' a été retirée
         {
-            name: 'commander',
-            description: 'Commander une boisson',
-            options: [
-                {
-                    name: 'boisson',
-                    description: 'La boisson à commander',
-                    type: 3, // STRING
-                    required: true,
-                    autocomplete: true
-                }
-            ]
+            name: 'manger',
+            description: 'Commander un plat',
         },
         {
             name: 'solde',
@@ -1511,7 +1350,7 @@ function buildSlashCommands() {
         },
         {
             name: 'travail',
-            description: 'Aider le tavernier et gagner un peu d’argent (cooldown 1h)',
+            description: 'Aider le tavernier et gagner un peu d\'argent (cooldown 1h)',
         },
         {
             name: 'don',
@@ -1558,12 +1397,12 @@ function buildSlashCommands() {
             description: 'Porter un toast',
         },
         {
-            name: 'etat',
+            name: 'state',
             description: 'Voir vos états actuels (énergie, humeur, ivresse, etc.)',
         },
         {
             name: 'dujour',
-            description: 'Connaître le spécial du jour',
+            description: 'Connaître les spéciaux du jour',
         },
         {
             name: 'des',
@@ -1590,7 +1429,6 @@ function buildSlashCommands() {
                 { name: 'bas', description: 'Texte du bas', type: 3, required: true }
             ]
         },
-        // >>> NOUVEAU
         {
             name: 'memes',
             description: 'Lister/rechercher des templates Imgflip',
@@ -1607,10 +1445,13 @@ function buildSlashCommands() {
     return commands;
 }
 
-// Connexion
+function calcTotals(subtotal) {
+    const tax = subtotal * TAX_RATE;
+    return { tax, total: subtotal + tax };
+}
+
 client.login(process.env.DISCORD_TOKEN);
 
-// Keep-alive (p. ex. hébergement gratuit)
 const http = require('http');
 const PORT = process.env.PORT || 10000;
 http.createServer((_, res) => res.end('ok')).listen(PORT);
